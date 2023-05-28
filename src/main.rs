@@ -15,6 +15,8 @@ fn init_logging() -> Result<(), Box<dyn Error>> {
         .join("state")
         .join("chat_rs.log");
 
+    println!("Logs saved to {log_file_path:?}");
+
     fs::create_dir_all(log_file_path.parent().unwrap())?;
 
     let config = ConfigBuilder::new()

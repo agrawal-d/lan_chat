@@ -114,6 +114,38 @@ fn get_send_socket(config: &Arc<ChatConfig>) -> Arc<UdpSocket> {
     info!("Messaging socket: {socket:?}, broadcast IP: {broadcast_ip:?}");
     Arc::new(socket)
 }
+fn display_prompt(config: &Arc<ChatConfig>) {
+    println!("");
+    print!("\r");
+    print!("{0 } > ", config.username);
+    stdout().flush().expect("Failed to flush stdout");
+}
+
+fn handle_data(data: &[u8], origin: SocketAddr, config: &Arc<ChatConfig>) {
+    let ip = origin.ip();
+    if ip == config.local_ip {
+        info!("Revd from myself");
+        return;
+    }
+
+    print!("\r");
+    let spaces: String = std::iter::repeat(' ')
+        .take(config.username.len() + 3)
+        .collect();
+    print!("{spaces}");
+    print!("\r");
+
+    if let Ok(data) = str::from_utf8(data) {
+        if let Some((username, message)) = data.split_once(' ') {
+            println!("{username}: {message}");
+        } else {
+            info!("Invalid data received from {origin:?}");
+        }
+    } else {
+        info!("Invalid data received from {origin:?}");
+    }
+    display_prompt(&config);
+}
 
 fn send_loop(config: Arc<ChatConfig>, socket: Arc<UdpSocket>) {
     info!("Looping send");
@@ -146,28 +178,6 @@ fn send_loop(config: Arc<ChatConfig>, socket: Arc<UdpSocket>) {
             Ok(size) => info!("Sent {} bytes", size),
             Err(err) => error!("Sending message failed due to error {:?}", err),
         }
-    }
-}
-
-fn display_prompt(config: &Arc<ChatConfig>) {
-    print!("{0 } > ", config.username);
-}
-
-fn handle_data(data: &[u8], origin: SocketAddr, config: &Arc<ChatConfig>) {
-    let ip = origin.ip();
-    if ip == config.local_ip {
-        info!("Revd from myself");
-        return;
-    }
-
-    if let Ok(data) = str::from_utf8(data) {
-        if let Some((username, message)) = data.split_once(' ') {
-            println!("{username}: {message}");
-        } else {
-            info!("Invalid data received from {origin:?}");
-        }
-    } else {
-        info!("Invalid data received from {origin:?}");
     }
 }
 
