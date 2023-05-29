@@ -33,7 +33,7 @@ fn init_logging() -> Result<(), Box<dyn Error>> {
         ),
         WriteLogger::new(
             LevelFilter::Trace,
-            config.clone(),
+            config,
             File::create(log_file_path).unwrap(),
         ),
     ])?;

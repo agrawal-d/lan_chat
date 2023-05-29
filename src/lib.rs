@@ -95,7 +95,7 @@ fn get_local_ip_address() -> Result<IpAddr, Box<dyn Error>> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     let arbitrary_loopback = SocketAddr::from(([1, 2, 3, 5], 6));
 
-    if let Err(_) = socket.connect(arbitrary_loopback) {
+    if socket.connect(arbitrary_loopback).is_err() {
         return Ok(read_ip_address());
     }
 
@@ -141,7 +141,7 @@ fn get_chat_broadcast_socket(config: &Arc<ChatConfig>) -> Arc<UdpSocket> {
 
 /// Print the prompt displayed to the user
 fn display_prompt(config: &Arc<ChatConfig>) {
-    println!("");
+    println!();
     print!("\r");
     print!("{0 } > ", config.username);
     stdout().flush().expect("Failed to flush stdout");
@@ -156,9 +156,7 @@ fn handle_data(data: &[u8], origin: SocketAddr, config: &Arc<ChatConfig>) {
     }
 
     print!("\r");
-    let spaces: String = std::iter::repeat(' ')
-        .take(config.username.len() + 3)
-        .collect();
+    let spaces: String = " ".repeat(config.username.len() + 3);
     print!("{spaces}");
     print!("\r");
 
@@ -171,7 +169,7 @@ fn handle_data(data: &[u8], origin: SocketAddr, config: &Arc<ChatConfig>) {
     } else {
         info!("Invalid data received from {origin:?}");
     }
-    display_prompt(&config);
+    display_prompt(config);
 }
 
 /// Broadcast message after reading from stdin to all other users using the passed socket
@@ -203,7 +201,7 @@ fn send_loop(config: Arc<ChatConfig>, socket: Arc<UdpSocket>, do_exit: Arc<Atomi
             continue;
         }
 
-        let data = config.username.clone() + " " + &message;
+        let data = config.username.clone() + " " + message;
 
         match socket.send_to(
             data.as_bytes(),
