@@ -17,19 +17,29 @@ use std::sync::Arc;
 use std::thread;
 use std::thread::sleep;
 
+/// The maximum length of a username
 const USERNAME_LENGTH_LIMIT: usize = 32;
+
+/// The size of buffer to be used in the recv_from() call
 const BUF_SIZE: usize = 1024;
+
+/// The maximum length of a message a user can send
 const MAX_MESSAGE_LENGTH: usize = 512;
+
+/// The message user can type to exit the chat app
 const EXIT_COMMAND: &str = "/exit";
+
+/// The duration thread will sleep for when waiting for data (non blocking UDP socket)
 const SOCKET_BLOCK_DURATION: std::time::Duration = std::time::Duration::from_millis(100);
 
+/// Stores read-only configuration for the chat app
 #[derive(Debug, Clone)]
 struct ChatConfig {
     port: u16,
     local_ip: IpAddr,
     username: String,
 }
-
+/// Arguments passed to the program, read from the command line
 #[derive(Parser, Debug)]
 #[command(author, version, about = "A simple chat app written in Rust")]
 pub struct CliArgs {
@@ -37,6 +47,7 @@ pub struct CliArgs {
     port: u16,
 }
 
+/// Ask the user for a username
 pub fn get_username() -> String {
     let mut username = String::new();
     print!("Enter a username > ");
@@ -55,6 +66,7 @@ pub fn get_username() -> String {
     username.to_string()
 }
 
+/// Ask the user for the local IP address
 fn read_ip_address() -> IpAddr {
     println!("Could not auto-detect local IP address. Please enter it manually.
         It looks something like 192.168.3.52. Use the ifconfig/ipconfig command to determine local-ip.");
@@ -78,6 +90,7 @@ fn read_ip_address() -> IpAddr {
     }
 }
 
+/// Get the local IP address of the machine, and if that fails, read it from stdin
 fn get_local_ip_address() -> Result<IpAddr, Box<dyn Error>> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     let arbitrary_loopback = SocketAddr::from(([1, 2, 3, 5], 6));
@@ -97,6 +110,7 @@ fn get_local_ip_address() -> Result<IpAddr, Box<dyn Error>> {
     Ok(local_ip)
 }
 
+/// Get the broadcast IP address for the local IP address
 fn get_broadcast_ip(local_ip: IpAddr) -> IpAddr {
     match local_ip {
         IpAddr::V4(ipv4) => {
@@ -110,7 +124,8 @@ fn get_broadcast_ip(local_ip: IpAddr) -> IpAddr {
     }
 }
 
-fn get_send_socket(config: &Arc<ChatConfig>) -> Arc<UdpSocket> {
+/// Create the socket that will be used for communication
+fn get_chat_broadcast_socket(config: &Arc<ChatConfig>) -> Arc<UdpSocket> {
     let socket = UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], config.port)))
         .expect("Failed to bind to socket");
     socket
@@ -123,6 +138,8 @@ fn get_send_socket(config: &Arc<ChatConfig>) -> Arc<UdpSocket> {
     info!("Messaging socket: {socket:?}, broadcast IP: {broadcast_ip:?}");
     Arc::new(socket)
 }
+
+/// Print the prompt displayed to the user
 fn display_prompt(config: &Arc<ChatConfig>) {
     println!("");
     print!("\r");
@@ -130,6 +147,7 @@ fn display_prompt(config: &Arc<ChatConfig>) {
     stdout().flush().expect("Failed to flush stdout");
 }
 
+/// Parse and process received data from `origin`
 fn handle_data(data: &[u8], origin: SocketAddr, config: &Arc<ChatConfig>) {
     let ip = origin.ip();
     if ip == config.local_ip {
@@ -156,6 +174,7 @@ fn handle_data(data: &[u8], origin: SocketAddr, config: &Arc<ChatConfig>) {
     display_prompt(&config);
 }
 
+/// Broadcast message after reading from stdin to all other users using the passed socket
 fn send_loop(config: Arc<ChatConfig>, socket: Arc<UdpSocket>, do_exit: Arc<AtomicBool>) {
     info!("Looping send");
     loop {
@@ -197,6 +216,7 @@ fn send_loop(config: Arc<ChatConfig>, socket: Arc<UdpSocket>, do_exit: Arc<Atomi
     }
 }
 
+/// Read and handle data from the socket
 fn recv_loop(config: Arc<ChatConfig>, socket: Arc<UdpSocket>, do_exit: Arc<AtomicBool>) {
     let mut buf = [0; BUF_SIZE];
     info!("Looping recv");
@@ -220,6 +240,7 @@ fn recv_loop(config: Arc<ChatConfig>, socket: Arc<UdpSocket>, do_exit: Arc<Atomi
     }
 }
 
+/// Initialize the chat application and start the send and receive loops
 pub fn init(args: CliArgs) -> Result<(), Box<dyn std::error::Error>> {
     let config = Arc::new(ChatConfig {
         port: args.port,
@@ -228,7 +249,7 @@ pub fn init(args: CliArgs) -> Result<(), Box<dyn std::error::Error>> {
     });
 
     info!("Client configuration: {:#?}", config);
-    let sock = get_send_socket(&config);
+    let sock = get_chat_broadcast_socket(&config);
     let sender = Arc::clone(&sock);
     let receiver = Arc::clone(&sock);
     let do_exit = Arc::new(AtomicBool::new(false));

@@ -8,6 +8,7 @@ use std::{
     fs::{self, File},
 };
 
+/// Initialize logging to a file and stdout
 fn init_logging() -> Result<(), Box<dyn Error>> {
     let log_file_path = home_dir()
         .ok_or("Failed to get home directory")?
