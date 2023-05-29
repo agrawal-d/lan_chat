@@ -3,6 +3,7 @@ use log::*;
 use std::error::Error;
 use std::io::stdin;
 use std::io::stdout;
+use std::io::ErrorKind;
 use std::io::Write;
 use std::net::AddrParseError;
 use std::net::IpAddr;
@@ -10,12 +11,17 @@ use std::net::Ipv4Addr;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
 use std::str;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread;
+use std::thread::sleep;
 
 const USERNAME_LENGTH_LIMIT: usize = 32;
 const BUF_SIZE: usize = 1024;
 const MAX_MESSAGE_LENGTH: usize = 512;
+const EXIT_COMMAND: &str = "/exit";
+const SOCKET_BLOCK_DURATION: std::time::Duration = std::time::Duration::from_millis(100);
 
 #[derive(Debug, Clone)]
 struct ChatConfig {
@@ -108,6 +114,9 @@ fn get_send_socket(config: &Arc<ChatConfig>) -> Arc<UdpSocket> {
     let socket = UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], config.port)))
         .expect("Failed to bind to socket");
     socket
+        .set_nonblocking(true)
+        .expect("Failed to set socket to non-blocking mode");
+    socket
         .set_broadcast(true)
         .expect("Failed to set socket to broadcast mode");
     let broadcast_ip = get_broadcast_ip(config.local_ip);
@@ -124,7 +133,7 @@ fn display_prompt(config: &Arc<ChatConfig>) {
 fn handle_data(data: &[u8], origin: SocketAddr, config: &Arc<ChatConfig>) {
     let ip = origin.ip();
     if ip == config.local_ip {
-        info!("Revd from myself");
+        info!("Revd from myself, ignoring message");
         return;
     }
 
@@ -147,7 +156,7 @@ fn handle_data(data: &[u8], origin: SocketAddr, config: &Arc<ChatConfig>) {
     display_prompt(&config);
 }
 
-fn send_loop(config: Arc<ChatConfig>, socket: Arc<UdpSocket>) {
+fn send_loop(config: Arc<ChatConfig>, socket: Arc<UdpSocket>, do_exit: Arc<AtomicBool>) {
     info!("Looping send");
     loop {
         let mut message = String::new();
@@ -159,6 +168,12 @@ fn send_loop(config: Arc<ChatConfig>, socket: Arc<UdpSocket>) {
             .expect("Failed to read message");
 
         let message = message.trim();
+
+        if message == EXIT_COMMAND {
+            info!("Exiting send loop due to {EXIT_COMMAND} command");
+            do_exit.store(true, Ordering::SeqCst);
+            break;
+        }
 
         if message.is_empty() {
             continue;
@@ -176,12 +191,13 @@ fn send_loop(config: Arc<ChatConfig>, socket: Arc<UdpSocket>) {
             SocketAddr::from((get_broadcast_ip(config.local_ip), config.port)),
         ) {
             Ok(size) => info!("Sent {} bytes", size),
+            Err(ref err) if err.kind() == ErrorKind::WouldBlock => sleep(SOCKET_BLOCK_DURATION),
             Err(err) => error!("Sending message failed due to error {:?}", err),
         }
     }
 }
 
-fn recv_loop(config: Arc<ChatConfig>, socket: Arc<UdpSocket>) {
+fn recv_loop(config: Arc<ChatConfig>, socket: Arc<UdpSocket>, do_exit: Arc<AtomicBool>) {
     let mut buf = [0; BUF_SIZE];
     info!("Looping recv");
     loop {
@@ -190,6 +206,14 @@ fn recv_loop(config: Arc<ChatConfig>, socket: Arc<UdpSocket>) {
                 info!("recv_from read {size} bytes from {sock:?}");
                 handle_data(&buf, sock, &config);
                 buf[..size].fill(0);
+            }
+            Err(ref err) if err.kind() == ErrorKind::WouldBlock => {
+                if do_exit.load(Ordering::SeqCst) {
+                    info!("Exiting recv loop");
+                    break;
+                }
+                sleep(SOCKET_BLOCK_DURATION);
+                continue;
             }
             Err(err) => error!("recv_from failed: {:?}", err),
         }
@@ -207,18 +231,29 @@ pub fn init(args: CliArgs) -> Result<(), Box<dyn std::error::Error>> {
     let sock = get_send_socket(&config);
     let sender = Arc::clone(&sock);
     let receiver = Arc::clone(&sock);
+    let do_exit = Arc::new(AtomicBool::new(false));
 
     let send_config = Arc::clone(&config);
+    let send_do_exit = Arc::clone(&do_exit);
     let recv_config = Arc::clone(&config);
+    let recv_do_exit = Arc::clone(&do_exit);
 
-    let mut threads = vec![];
+    let mut join_handles = vec![];
 
-    threads.push(thread::spawn(move || send_loop(send_config, sender)));
-    threads.push(thread::spawn(move || recv_loop(recv_config, receiver)));
+    println!("Type {EXIT_COMMAND} to exit the application");
 
-    for thread in threads {
-        thread.join().expect("Failed to join thread");
+    join_handles.push(thread::spawn(move || {
+        send_loop(send_config, sender, send_do_exit)
+    }));
+    join_handles.push(thread::spawn(move || {
+        recv_loop(recv_config, receiver, recv_do_exit)
+    }));
+
+    for thread_handle in join_handles {
+        info!("Thread {:?} joined", thread_handle.thread().id());
+        thread_handle.join().expect("Failed to join thread");
     }
 
+    println!("Exiting application.");
     Ok(())
 }
